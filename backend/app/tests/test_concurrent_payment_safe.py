@@ -1,20 +1,16 @@
 """Демонстрация защиты pay_order_safe (PostgreSQL)."""
 
+pytest_plugins = ("app.tests.conftest_concurrent",)
+
 import asyncio
-import os
 
 import pytest
 
 from app.application.payment_service import PaymentService
 from app.domain.exceptions import OrderAlreadyPaidError
 from app.infrastructure.db import SessionLocal
+from app.tests.conftest_concurrent import requires_postgres
 from app.tests.db_seed import seed_order_in_created_status
-
-
-requires_postgres = pytest.mark.skipif(
-    "postgresql" not in os.environ.get("DATABASE_URL", ""),
-    reason="FOR UPDATE + изоляция проверяются на PostgreSQL",
-)
 
 
 @requires_postgres

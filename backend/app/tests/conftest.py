@@ -29,6 +29,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     из module-level engine привязан к циклу session-фикстур — RuntimeError «Future
     attached to a different loop».
     """
+    config._domain_only_pytest_session = bool(items) and all(
+        "test_domain.py" in item.nodeid for item in items
+    )
+
     for item in items:
         fn = getattr(item, "obj", None)
         if fn is None or not inspect.iscoroutinefunction(fn):
@@ -151,11 +155,16 @@ _SQLITE_DDL = [
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
-async def _ensure_schema():
+async def _ensure_schema(request: pytest.FixtureRequest):
     """
     Схема для SQLite и догон миграции idempotency_keys для PostgreSQL.
     Выполняется на том же event loop, что и async-тесты (см. pytest.ini).
+
+    Для прогона только test_domain.py не поднимаем SQLite/aiosqlite — домен БД не трогает.
     """
+    if getattr(request.config, "_domain_only_pytest_session", False):
+        return
+
     from app.infrastructure import db
 
     url = os.environ.get("DATABASE_URL", "")
@@ -196,7 +205,7 @@ async def created_order_id():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def _reset_redis_client_between_tests():
+async def _reset_redis_client_between_tests(request: pytest.FixtureRequest):
     """
     Новый in-memory Redis на каждый тест (fakeredis привязан к event loop).
 
@@ -205,6 +214,10 @@ async def _reset_redis_client_between_tests():
     Для реального Redis очищаем ключи rate limit перед тестом: иначе все POST без
     X-Forwarded-For попадают в subject «unknown», счётчик переживает тесты и даёт 429.
     """
+    if getattr(request.config, "_domain_only_pytest_session", False):
+        yield
+        return
+
     import app.infrastructure.redis_client as redis_client_mod
 
     redis_client_mod._client = None

@@ -1,10 +1,15 @@
-name: Lab 1 - Marketplace Database CI
+name: Lab 5 - Marketplace Database CI
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+
+# Не отменять уже идущие jobs при новом push (иначе доменные pytest «висят» в очереди до таймаута).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   lint:
@@ -530,7 +535,7 @@ jobs:
         run: |
           cd backend
           export PYTHONPATH=$(pwd)
-          pytest app/tests/test_domain.py -v --tb=short
+          pytest app/tests/test_domain.py -v --tb=short -p no:anyio
 
   test-payment-invariant:
     name: Test CRITICAL Invariant (Cannot Pay Twice)
@@ -554,7 +559,7 @@ jobs:
           cd backend
           export PYTHONPATH=$(pwd)
           echo "Testing CRITICAL invariant - order cannot be paid twice"
-          pytest app/tests/test_domain.py::TestCriticalPaymentInvariant -v
+          pytest app/tests/test_domain.py::TestCriticalPaymentInvariant -v -p no:anyio
 
   test-integration:
     name: Integration Tests
@@ -680,16 +685,77 @@ jobs:
             echo "✅ Second payment correctly rejected by trigger"
           fi
 
+  # Проверочные тесты из условия ЛР5 (README): кэш, инвалидация, rate limit — нужны Postgres + Redis.
+  test-lab05-cache-rate-limit:
+    name: LAB 05 — cache consistency & payment rate limit
+    runs-on: ubuntu-latest
+    needs: [check-sql-schema, check-implementation-complete]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: marketplace_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Setup database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d marketplace_test -f backend/migrations/001_init.sql
+
+      - name: Run LAB 05 required tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/marketplace_test
+          REDIS_URL: redis://127.0.0.1:6379/0
+        run: |
+          cd backend
+          export PYTHONPATH=$(pwd)
+          pytest app/tests/test_cache_stale_consistency.py \
+            app/tests/test_cache_event_invalidation.py \
+            app/tests/test_payment_rate_limit_redis.py \
+            -v --tb=short
+
   summary:
     name: Summary
     runs-on: ubuntu-latest
-    needs: [lint, check-ddd-architecture, check-domain-implementation, check-sql-schema, check-implementation-complete, test-domain, test-payment-invariant, test-integration, test-db-trigger]
+    needs: [lint, check-ddd-architecture, check-domain-implementation, check-sql-schema, check-implementation-complete, test-domain, test-payment-invariant, test-integration, test-db-trigger, test-lab05-cache-rate-limit]
     if: always()
     steps:
       - name: Print summary
         run: |
           echo "======================================"
-          echo "Lab 1 - Marketplace Database"
+          echo "Lab 5 - Marketplace Database"
           echo "======================================"
           echo ""
           echo "Checks performed:"
@@ -702,6 +768,7 @@ jobs:
           echo "7. ✓ CRITICAL: Payment Invariant Test"
           echo "8. ✓ Integration Tests"
           echo "9. ✓ DB Trigger Test (double payment prevention)"
+          echo "10. ✓ LAB 05: cache stale / event invalidation / payment rate limit"
           echo ""
           echo "CRITICAL REQUIREMENT:"
           echo "Order cannot be paid twice - enforced at:"

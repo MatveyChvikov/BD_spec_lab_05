@@ -156,6 +156,9 @@ docker compose exec -T backend pytest app/tests/test_payment_rate_limit_redis.py
 # Все три файла одной командой (быстрая проверка):
 docker compose exec -T backend pytest app/tests/test_cache_stale_consistency.py app/tests/test_cache_event_invalidation.py app/tests/test_payment_rate_limit_redis.py -v --tb=short
 
+# Только доменные тесты: `-p no:anyio` — иначе после быстрого «passed» процесс иногда не завершается (плагин anyio).
+docker compose exec -T backend pytest app/tests/test_domain.py -q --tb=short -p no:anyio
+
 docker compose exec -T backend pytest app/tests/ -q --tb=short
 
 # Альтернатива без постоянно работающего backend (одноразовый контейнер, db и redis уже должны быть Up):
